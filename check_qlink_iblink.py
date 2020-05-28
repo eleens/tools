@@ -173,51 +173,6 @@ class Collect(object):
         write_data(ssh.execute("/usr/local/bin/qdatamgr qlink show -c"))
         return {"node": ssh.host, "ret": ret}
 
-    def collect_sto_qlink(self, ssh):
-        """ 采集存储节点的qlink的lun的信息 """
-        Printer.print_white("Collecting qlink lun information for storage node {} ".format(ssh.host))
-        cmd = "/usr/local/bin/api-qdatamgr qlink show -t"
-        output = ssh.execute(cmd)
-        ret = json.loads(output)
-        write_data(ssh.execute("/usr/local/bin/qdatamgr qlink show -t"))
-        return {"node": ssh.host, "ret": ret}
-
-    def collect_ib_link(self, ssh):
-        """ 采集ib卡的信息 """
-        cmd = "/usr/sbin/iblinkinfo --cas-only"
-        output = ssh.execute(cmd)
-        link_info = {}
-        all_link_info = []
-        node1 = ""
-        for line in output.splitlines():
-            match = re.search(r'^CA: (.+):$', line)
-            if match:
-                node1 = match.group(1).strip()
-                continue
-            match = re.search(
-                '\s*.*(\d+)\[\s+\] ==\(.* (\d+\.\d+ Gbps) .*\)==>.*(\d+)\[\s*\]\s*"(.*)" \((.*)\)',
-                line)
-            if match and node1:
-                link_status = line.split("==>")[0].split()[-2][:-1]
-                port1 = match.group(1)
-                rate = match.group(2)
-                port2 = match.group(3)
-                node2 = match.group(4).strip()
-                message = match.group(5)
-                link_info[node1] = port1
-                link_info[node2] = port2
-                link_info['ca'] = node1
-                link_info["status"] = link_status
-                link_info["rate"] = rate
-                link_info['msg'] = message
-                link_info['port1'] = port1
-                if link_info not in all_link_info:
-                    all_link_info.append(link_info)
-                # 初始化
-                link_info = {}
-
-        return all_link_info
-
     def collect_ib_info(self, ssh):
         Printer.print_white("Collecting IB information for node {}".format(ssh.host))
         cmd = "/usr/local/bin/api-qdatamgr collect ib_info -i"
@@ -267,33 +222,6 @@ class Check(object):
                     "All of the qlink link state is active of node {}".format(lun_list["node"]))
         Printer.print_title("END: Check the qlink state of compute node")
         print "\n"
-
-    # todo 重构
-    def check_ib_state_and_rate(self):
-        """ 检查ib端口的状态和ib端口速率 """
-        Printer.print_green("------开始检查：IB状态和IB速率--------")
-        error_state = 1
-        error_rate = 1
-        for info in self.ib_info:
-            if info['status'] != 'Active':
-                error_state = 0
-                Printer.print_error(
-                    "{}，端口{}的状态是{}，请手工恢复".format(info['ca'], info['port1'],
-                                                 info['status']))
-            if info['msg'] and not info['msg'].isspace():
-                error_rate = 0
-                Printer.print_error("{}，端口{}的速率不正常，当前是{}, {}".format(info['ca'],
-                                                                     info[
-                                                                         'port1'],
-                                                                     info[
-                                                                         'rate'],
-                                                                     info[
-                                                                         'msg']))
-        if error_state:
-            Printer.print_ok("所有的IB端口状态都正常")
-        if error_rate:
-            Printer.print_ok("所有的IB速率都正常")
-        Printer.print_green("------结束检查：IB状态和IB速率--------")
 
     def check_ib_state(self):
         """ 检查ib端口的状态 """
@@ -471,7 +399,6 @@ class CheckLatency(object):
         return output
 
 
-
 def print_ret():
     print "\n"
     Printer.print_title("Begin: Check the qlink state of compute node")
@@ -508,65 +435,18 @@ def print_ret():
     # Printer.print_green("------结束检查：IB网络延时--------\n\n")
 
 
-class QdataCheckIB(object):
-    def get_parse(self):
-        parser = argparse.ArgumentParser(description='Process some integers.')
-        subparsers = parser.add_subparsers(metavar="<subcommands>")
-
-        parser_iostat = subparsers.add_parser("iostat",
-                                                    help="Check iostat")
-        parser_iostat.add_argument("-a", "--await",
-                                     required=True,
-                                     action="store",
-                                     dest="qdata_type",
-                                     help="specify the server type")
-        parser_iostat.add_argument("-c", "--count",
-                                     required=True,
-                                     action="store",
-                                     dest="qdata_type",
-                                     help="specify the server type")
-        parser_iostat.set_defaults(func=self.do_iostat)
-
-        parser_ib = subparsers.add_parser("ib", help="Check IB link")
-        parser_ib.add_argument("-l", "--iblat",
-                                     required=True,
-                                     action="store",
-                                     dest="qdata_type",
-                                     help="specify the server type")
-        parser_ib.set_defaults(func=self.do_ib)
-
-        parser_collect = subparsers.add_parser("collect",
-                                               help="Collect information")
-        parser_collect.set_defaults(func=self.do_collect)
-
-    def do_iostat(self):
-        pass
-
-    def do_ib(self):
-        pass
-
-    def do_collect(self):
-        pass
-
-    def main(self, argv):
-        subcommand_parser = self.get_parse()
-        args = subcommand_parser.parse_args(argv)
-        args.func(args)
-
-
 def main():
-    data = {}
-
     import time
     t1 = time.time()
-    # init_env()
+    init_env()
+
     collect = Collect()
     cluster = collect.collect_cluster_info()
     com_qlinks = []
-    sto_luns = []
     ib_link_info = {}
     com_node = [node for node in cluster if node['type'] == 'compute']
     sto_node = [node for node in cluster if node['type'] == 'storage']
+
     Printer.print_title("BEGINING COLLECT INFORMATION")
 
     for node in cluster:
@@ -574,9 +454,6 @@ def main():
         if node['type'] == 'compute':
             qlink = collect.collect_com_qlink(ssh)
             com_qlinks.append(qlink)
-        else:
-            lun = collect.collect_sto_qlink(ssh)
-            sto_luns.append(lun)
         ib_info = collect.collect_ib_info(ssh)
         ib_link_info[node['ip']] = ib_info
 
@@ -591,15 +468,9 @@ def main():
 
     latency = CheckLatency()
     latency.check_net_lat(com_node, sto_node, ib_link_info)
+
     t2 = time.time()
     print t2 - t1
-
-
-def main1():
-    test = QdataCheckIB()
-    argv = sys.argv[1:]
-    # print argv
-    test.main(argv)
 
 
 if __name__ == "__main__":
