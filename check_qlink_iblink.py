@@ -20,7 +20,7 @@ import time
 import socket
 import logging
 import paramiko
-import argparse
+
 import threading
 import subprocess
 from termcolor import colored
@@ -30,16 +30,7 @@ PASSWORD = "cljslrl0620"
 # KEY_FILE = "/root/.ssh/id_rsa"
 KEY_FILE = None
 FILE_PATH = "/tmp/check_iblink_ret.txt"
-IOWAIT = {
-    'COM': {
-        "AWAIT": 100,
-        "SVCTM": 10
-    },
-    'STO': {
-        "AWAIT": 100,
-        "SVCTM": 10
-    }
-}
+
 FLAG = 0
 
 CLUSTER_DATA = '[{"ibcard_ip": ["172.16.129.6", "172.16.131.6", "172.16.130.6", "172.16.128.6"], "name": "com6", "ip": "10.10.100.6", "cluster_uuid": "QD-0003VDPM", "type": "compute", "id": 2}, ' \
