@@ -45,7 +45,7 @@ LOG = logging.getLogger(__name__)
 
 def init_env():
     if os.path.exists(FILE_PATH):
-        cmd = "rm -rf {}".format(FILE_PATH)
+        cmd = "/usr/bin/rm -rf {}".format(FILE_PATH)
         os.system(cmd)
     # subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
@@ -147,20 +147,17 @@ class SSH(object):
 class Collect(object):
     """ 采集信息"""
 
-    def collect_cluster_info(self):
+    def collect_cluster_info(self, ssh):
         """ 采集集群信息 """
         Printer.print_white(
             "Collecting qdata cluster information on compute node {}".format(
-                socket.gethostname()))
+                ssh.host))
         cmd = "/usr/local/bin/api-qdatamgr conf show -s"
-        # output = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        output = CLUSTER_DATA
+        output = ssh.execute(cmd)
         data = json.loads(output)
         LOG.info(data)
-        # output2 = subprocess.Popen("/usr/local/bin/qdatamgr conf show -s",
-        #                            stdout=subprocess.PIPE,
-        #                            stderr=subprocess.PIPE)
-        write_data(output, msg="cluster information, cmd: /usr/local/bin/qdatamgr conf show -s")
+        output2 = ssh.execute("/usr/local/bin/qdatamgr conf show -s")
+        write_data(output2, msg="cluster information, cmd: /usr/local/bin/qdatamgr conf show -s")
         return data
 
     def collect_com_qlink(self, ssh):
@@ -487,21 +484,22 @@ def main():
 
     Printer.print_title("BEGINING COLLECT INFORMATION")
     collect = Collect()
-    cluster = collect.collect_cluster_info()
+    node_ip = socket.gethostbyname(socket.gethostname())
+    node_ip = "10.10.100.216"
+    ssh = SSH(host=node_ip, username=USERNAME, password=PASSWORD)
+    cluster = collect.collect_cluster_info(ssh)
     com_qlinks = []
     ib_link_info = {}
     com_node = [node for node in cluster if node['type'] == 'compute']
     sto_node = [node for node in cluster if node['type'] == 'storage']
 
     for node in cluster:
-        ssh = SSH(host=node['ip'], username=USERNAME, password=PASSWORD)
+        ssh = SSH(host=node['ip'], username=USERNAME, password=PASSWORD, key_file=KEY_FILE)
         if node['type'] == 'compute':
             qlink = collect.collect_com_qlink(ssh)
             com_qlinks.append(qlink)
         ib_info = collect.collect_ib_info(ssh)
         ib_link_info[node['ip']] = ib_info
-
-    # print_ret()
 
     check = Check(com_qlinks, ib_link_info)
     check.check_qlink_state()
