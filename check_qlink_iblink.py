@@ -19,13 +19,15 @@ import time
 import socket
 import logging
 import paramiko
+import argparse
 
 import threading
 from termcolor import colored
 
 USERNAME = "root"
-PASSWORD = None
-KEY_FILE = "/root/.ssh/id_rsa"
+PASSWORD = "cljslrl0620"
+KEY_FILE = None
+# KEY_FILE = "/root/.ssh/id_rsa"
 FILE_PATH = "/tmp/check_iblink_ret.txt"
 
 FLAG = 0
@@ -138,11 +140,15 @@ class SSH(object):
                          key_filename=self.key_file, password=self.password)
 
     def execute(self, cmd):
-        stdin, stdout, stderr = self.ssh.exec_command(cmd)
-        data = stdout.read()
-        error = stderr.read()
-        # if error:
-        #     print error
+        try:
+            stdin, stdout, stderr = self.ssh.exec_command(cmd, timeout=30)
+            data = stdout.read()
+            error = stderr.read()
+            if error:
+               LOG.error(error)
+        except Exception as e:
+            LOG.error(e)
+            data = ''
         return data
 
     def __del__(self):
@@ -259,18 +265,20 @@ class Check(object):
         """ 检查ib端口速率 """
         Printer.print_title("Begin: Check the rate of IB card")
         error_rate = 0
-        max_rate = 0
+        rate_list = [float(re.sub("\(.*\)", "", info['rate']) or 0) for
+                     node_info in self.ib_info.values() for info in node_info]
+
+        max_rate = max(rate_list)
         for node, node_info in self.ib_info.items():
             for info in node_info:
                 if not info['hca_ip']:
                     continue
-                if float(info['rate']) < max_rate:
+                if float(re.sub("\(.*\)", "", info['rate']) or 0) < max_rate:
                     error_rate = 1
                     Printer.print_error(
                         "node_ip: {}, ib_ip: {}, hca_name: {}, port: {}, current rate is {}, is less than others {}".format(
                             node, info['hca_ip'], info['name'], info['port'],
                             info['rate'], max_rate))
-                max_rate = max(max_rate, float(info['rate']))
         if not error_rate:
             Printer.print_ok("The rate of all IB cards is {}".format(max_rate))
         Printer.print_title("END: Check the rate of IB card")
@@ -399,7 +407,7 @@ class CheckLatency(object):
         write_data(output, msg="com node: {}, cmd: {}".format(com_ssh.host, com_cmd))
 
     def sto_run_ib_read(self, sto_ssh, ib_ip, hca, port):
-        sto_cmd = "ib_read_lat -a -R -F {} --ib-dev {} --ib-port {} -F".format(
+        sto_cmd = "ib_read_lat -a -R {} --ib-dev {} --ib-port {} -F".format(
             ib_ip, hca, port)
         output = sto_ssh.execute(sto_cmd)
         write_data(output, msg="sto node: {}, cmd: {}".format(sto_ssh.host, sto_cmd))
@@ -420,73 +428,51 @@ class CheckLatency(object):
         return output
 
 
-def print_ret():
-    print "\n"
-    Printer.print_title("Begin: Check the qlink state of compute node")
-    Printer.print_error(
-        "The mapth /dev/qdata/mpath-s01.3295.01.LUN36 is inactive, the ib link 172.16.128.68 is inactive of node 10.10.100.6")
-    Printer.print_error(
-        "The mapth /dev/qdata/mpath-s01.3295.01.LUN35 is active, the ib link 172.16.128.68 is inactive of node 10.10.100.6")
-    Printer.print_error(
-        "The mapth /dev/qdata/mpath-s01.3295.01.LUN34 is inactive, the ib link 172.16.128.68 is active of node 10.10.100.6")
-    Printer.print_ok(
-        "All of the qlink link state is active of node 10.10.100.6")
-    Printer.print_title("END: Check the qlink state of compute node")
-    print "\n"
-
-    Printer.print_title("Begin: Check the state of IB card")
-    Printer.print_error(
-        "node_ip: 10.10.100.8, ib_ip: 172.16.128.8 , hca_name: mxl4_0, port: Port1, current state is Down")
-    Printer.print_ok("All of the IB card is Active")
-    Printer.print_title("END: Check the state of IB card ")
-    print "\n"
-
-    Printer.print_title("Begin: Check the rate of IB card")
-    Printer.print_error(
-        "node_ip: 10.10.100.8, ib_ip: 172.16.128.8, hca_name: mxl4_0, port: Port1, current rate is 40.0, is less than others 56.0")
-    Printer.print_ok("The rate of all IB cards is 56.0")
-    Printer.print_title("END: Check the rate of IB card")
-    print "\n"
-
-    # Printer.print_green("------开始检查：计算节点磁盘io延时--------")
-    # Printer.print_green("------结束检查：计算节点磁盘io延时--------\n\n")
-    #
-    # Printer.print_green("------开始检查：存储节点磁盘io延时--------")
-    # Printer.print_green("------结束检查：存储节点磁盘io延时--------\n\n")
-
-    # Printer.print_green("------开始检查：IB网络延时--------")
-    # Printer.print_green("------结束检查：IB网络延时--------\n\n")
-
-
+@timer
 def main():
     init_env()
-    Printer.print_title("BEGINING COLLECT INFORMATION")
-    collect = Collect()
+    parser = argparse.ArgumentParser(description='Check iblink')
+    parser.add_argument('-t', '--type', default="all", choices=['all', 'lat', 'check'])
+    parser.add_argument('-c', '--compute', default=None, help=" Compute node ip")
+    parser.add_argument('-s', '--storage', default=None, help="Storage node ip")
+    args = parser.parse_args()
+    com_ip = args.compute
+    sto_ip = args.storage
+    rtype = args.type
+
     node_ip = socket.gethostbyname(socket.gethostname())
-    ssh = SSH(host=node_ip, username=USERNAME, password=PASSWORD, key_file=KEY_FILE)
+    ssh = SSH(host=node_ip, username=USERNAME, password=PASSWORD,
+              key_file=KEY_FILE)
+    collect = Collect()
+    Printer.print_title("BEGINING COLLECT INFORMATION")
     cluster = collect.collect_cluster_info(ssh)
-    com_qlinks = []
     ib_link_info = {}
+    com_qlinks = []
+    if com_ip and sto_ip:
+        cluster = [node for node in cluster if
+                   node['ip'] in [com_ip, sto_ip]]
     com_node = [node for node in cluster if node['type'] == 'compute']
     sto_node = [node for node in cluster if node['type'] == 'storage']
 
     for node in cluster:
         ssh = SSH(host=node['ip'], username=USERNAME, password=PASSWORD,
                   key_file=KEY_FILE)
-        if node['type'] == 'compute':
+        if node['type'] == 'compute' and rtype in ['all', "check"]:
             qlink = collect.collect_com_qlink(ssh)
             com_qlinks.append(qlink)
         ib_info = collect.collect_ib_info(ssh)
         ib_link_info[node['ip']] = ib_info
 
-    check = Check(com_qlinks, ib_link_info)
-    check.check_qlink_state()
-    check.check_ib_state()
-    check.check_ib_rate()
-    check.check_ib_sm_lid(com_node, sto_node)
+    if rtype in ['all', "check"]:
+        check = Check(com_qlinks, ib_link_info)
+        check.check_qlink_state()
+        check.check_ib_state()
+        check.check_ib_rate()
+        check.check_ib_sm_lid(com_node, sto_node)
 
-    latency = CheckLatency()
-    latency.check_net_lat(com_node, sto_node, ib_link_info)
+    if rtype in ['all', 'lat']:
+        latency = CheckLatency()
+        latency.check_net_lat(com_node, sto_node, ib_link_info)
 
 
 if __name__ == "__main__":

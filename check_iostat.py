@@ -15,11 +15,14 @@ import json
 import socket
 import argparse
 import paramiko
+from datetime import datetime
 
 
 USERNAME = "root"
-PASSWORD = None
-KEY_FILE = "/root/.ssh/id_rsa"
+# PASSWORD = None
+PASSWORD = "cljslrl0620"
+# KEY_FILE = "/root/.ssh/id_rsa"
+KEY_FILE = None
 
 
 class SSH(object):
@@ -89,13 +92,14 @@ class BaseIOStat(object):
 
 
 class ComIOStat(BaseIOStat):
+    """ 查看计算节点的iostat"""
 
     def __init__(self, node_ip, await_max=None, count=None):
         super(ComIOStat, self).__init__(node_ip)
         self.await_max = await_max
         self.count = count
         self.path_map_cmd = "/bin/ls -l -G /dev/qdata/mpath* | awk {'print $8, $10'}"
-        self.cmd = "/usr/bin/iostat -dmx 1 {} /dev/qdata/* /dev/nvme*".format(self.count)
+        self.cmd = "/usr/bin/iostat -dmx 1 {} /dev/qdata/* /dev/nvme* /dev/sd*".format(self.count)
         self.qlink_map = {}
         self.get_path_map()
         self.get_qlink_map()
@@ -125,7 +129,7 @@ class ComIOStat(BaseIOStat):
             if len(values) > 11 and not values[9].isalpha():
                 await = float(values[9])
                 dm = values[0]
-                line = line.replace(dm, self.path_map.get(dm, dm).ljust(
+                line = line.strip().replace(dm, self.path_map.get(dm, dm).ljust(
                     self.device_len + len(dm)))
                 if await < self.await_max:
                     continue
@@ -135,13 +139,17 @@ class ComIOStat(BaseIOStat):
                     map_device = self.qlink_map.get(
                         self.path_map.get(values[0], values[0]), {})
                     if device in map_device.keys():
-                        nvme = nvme.replace(
+                        nvme = nvme.strip().replace(
                             device, "   |--- {}({})".format(
                                 device, map_device[device]).ljust(
                                 self.device_len + len(device)))
                         option["child"].append(nvme)
                 ret.append(option)
 
+        if not title:
+            return
+        print "{}".format(datetime.now()).center(120, "=")
+        print "\n"
         print title
         for line in ret:
             print line["parrent"]
@@ -155,7 +163,7 @@ class ComIOStat(BaseIOStat):
         try:
             stdout = self.ssh.execute_line(self.cmd)
             for line in iter(stdout.readline, ""):
-                if line.startswith("nvme"):
+                if line.startswith("nvme") or line.startswith("sd"):
                     nvme_data.append(line)
                 else:
                     data.append(line)
@@ -190,11 +198,15 @@ class StoIOStat(BaseIOStat):
             if len(values) > 11 and not values[9].isalpha():
                 await = float(values[9])
                 dm = values[0]
-                line = line.replace(dm, "/dev/qdisk/{}".format(self.path_map.get(dm, dm).ljust(
+                line = line.strip().replace(dm, "/dev/qdisk/{}".format(self.path_map.get(dm, dm).ljust(
                     self.device_len + len(dm))))
                 if await >= self.await_max:
                     ret.append(line)
 
+        if not title:
+            return
+        print "{}".format(datetime.now()).center(120, "=")
+        print "\n"
         print title
         for line in ret:
             print line
