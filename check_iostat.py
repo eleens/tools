@@ -19,10 +19,8 @@ from datetime import datetime
 
 
 USERNAME = "root"
-# PASSWORD = None
-PASSWORD = "cljslrl0620"
-# KEY_FILE = "/root/.ssh/id_rsa"
-KEY_FILE = None
+PASSWORD = None
+KEY_FILE = "/root/.ssh/id_rsa"
 
 
 class SSH(object):

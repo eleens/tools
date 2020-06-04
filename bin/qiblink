@@ -1,0 +1,15 @@
+#!/bin/env bash
+current_path=`pwd`
+path="/home/sendoh/tools"
+cmd="python check_qlink_iblink.py"
+source /home/sendoh/sendoh-dev-env/bin/activate > /dev/null
+cd $path
+
+var=" "
+for i
+do
+    var+=" $i"
+done
+
+$cmd $var
+cd "$current_path"
