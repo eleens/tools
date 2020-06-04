@@ -27,8 +27,10 @@ from termcolor import colored
 
 
 USERNAME = "root"
-PASSWORD = None
-KEY_FILE = "/root/.ssh/id_rsa"
+# PASSWORD = None
+# KEY_FILE = "/root/.ssh/id_rsa"
+KEY_FILE = None
+PASSWORD = "cljslrl0620"
 FILE_PATH = "/tmp/check_iblink_ret.txt"
 
 logging.basicConfig(level=logging.INFO,
@@ -136,11 +138,12 @@ class SSH(object):
                          key_filename=self.key_file, password=self.password)
 
     def execute(self, cmd, timeout=60):
+        LOG.info("cmd".format(cmd))
         try:
             data = self.exec_cmd(cmd, timeout)
         except Exception as e:
             LOG.error(e.message)
-            data = '[]'
+            data = ''
         return data
 
     def exec_cmd(self, cmd, timeout=60):
@@ -164,9 +167,13 @@ class Collect(object):
             "Collecting qdata cluster information on compute node {}".format(
                 ssh.host))
         cmd = "/usr/local/bin/api-qdatamgr conf show -s"
-        output = ssh.execute(cmd)
-        data = json.loads(output)
-        LOG.info(data)
+        try:
+            output = ssh.execute(cmd)
+            data = json.loads(output)
+            LOG.info(data)
+        except Exception as e:
+            LOG.error(e.message)
+            data = []
         output2 = ssh.execute("/usr/local/bin/qdatamgr conf show -s")
         write_data(output2, msg="cluster information, cmd: /usr/local/bin/qdatamgr conf show -s")
         return data
@@ -177,8 +184,13 @@ class Collect(object):
             "Collecting qlink link information for compute node {}".format(
                 ssh.host))
         cmd = "/usr/local/bin/api-qdatamgr qlink show -c"
-        output = ssh.execute(cmd)
-        ret = json.loads(output)
+        try:
+            output = ssh.execute(cmd)
+            ret = json.loads(output)
+            LOG.info(ret)
+        except Exception as e:
+            LOG.error(e.message)
+            ret = []
         cmd2 = "/usr/local/bin/qdatamgr qlink show -c"
         write_data(ssh.execute(cmd2),
                    msg="node: {}, cmd: {}".format(ssh.host, cmd2))
@@ -189,11 +201,16 @@ class Collect(object):
         Printer.print_white(
             "Collecting IB information for node {}".format(ssh.host))
         cmd = "/usr/local/bin/api-qdatamgr collect ib_info -i"
-        output = ssh.execute(cmd)
+        try:
+            output = ssh.execute(cmd)
+            ret = json.loads(output)
+        except Exception as e:
+            LOG.error(e)
+            ret = {}
+
         cmd2 = "/usr/local/bin/qdatamgr collect ib_info -i"
         write_data(ssh.execute(cmd2),
                    msg="node: {}, cmd: {}".format(ssh.host, cmd2))
-        ret = json.loads(output)
         result = []
         hca_map = ret.get('ib_hca_map', {})
         for hca_guid, values in ret.get('hca_devices', {}).items():
@@ -581,6 +598,7 @@ def main():
     iters = args.iters
 
     node_ip = socket.gethostbyname(socket.gethostname())
+    node_ip = "10.10.90.11"
     ssh = SSH(host=node_ip, username=USERNAME, password=PASSWORD,
               key_file=KEY_FILE)
     collect = Collect()
