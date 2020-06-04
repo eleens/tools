@@ -20,25 +20,21 @@ import socket
 import logging
 import paramiko
 import argparse
-
 import threading
+import functools
+
 from termcolor import colored
 
-USERNAME = "root"
-PASSWORD = "cljslrl0620"
-KEY_FILE = None
-# KEY_FILE = "/root/.ssh/id_rsa"
-FILE_PATH = "/tmp/check_iblink_ret.txt"
 
-FLAG = 0
+USERNAME = "root"
+PASSWORD = None
+KEY_FILE = "/root/.ssh/id_rsa"
+FILE_PATH = "/tmp/check_iblink_ret.txt"
 
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
                     filename='/tmp/check_iblink.log')
 LOG = logging.getLogger(__name__)
-
-
-import functools
 
 
 def timer(func):
@@ -139,16 +135,20 @@ class SSH(object):
                          timeout=self.timeout, username=self.username,
                          key_filename=self.key_file, password=self.password)
 
-    def execute(self, cmd):
+    def execute(self, cmd, timeout=60):
         try:
-            stdin, stdout, stderr = self.ssh.exec_command(cmd, timeout=30)
-            data = stdout.read()
-            error = stderr.read()
-            if error:
-               LOG.error(error)
+            data = self.exec_cmd(cmd, timeout)
         except Exception as e:
-            LOG.error(e)
-            data = ''
+            LOG.error(e.message)
+            data = '[]'
+        return data
+
+    def exec_cmd(self, cmd, timeout=60):
+        stdin, stdout, stderr = self.ssh.exec_command(cmd, timeout=timeout)
+        data = stdout.read()
+        error = stderr.read()
+        if error:
+            LOG.error(error)
         return data
 
     def __del__(self):
@@ -307,7 +307,133 @@ class Check(object):
 class CheckLatency(object):
     """ 通过测试检查信息"""
 
-    def check_net_lat(self, com_node, sto_node, ib_link_info):
+    def run_lat(self, ib_ip, com, ib_link_info, sto_ssh_dict, num):
+        com_ip = com['com_ip']
+        com_ib_info = [ib for ib in ib_link_info[com_ip] if
+                       ib_ip in ib['hca_ip']]
+        com_hca = com_ib_info[0].get('name',
+                                     "") if com_ib_info else ""
+        com_port = com_ib_info[0].get('port', "").replace("Port",
+                                                          "") if com_ib_info else ""
+
+        com_read_cmd = "ib_read_lat -a -R --ib-dev {} --ib-port {} --iters {} -F".format(com_hca, com_port, num)
+        com_write_cmd = "ib_write_lat -a -R --ib-dev {} --ib-port {} --iters {} -F".format(
+            com_hca, com_port, num)
+        for sto_ip, sto in sto_ssh_dict.iteritems():
+
+            sto_ib_ip = ib_ip.split('.')[:-1]
+            sto_ib_ip.append(sto_ip.split('.')[-1])
+            sto_ib_ip = '.'.join(sto_ib_ip)
+            sto_ib_info = [ib for ib in ib_link_info[sto_ip] if
+                           sto_ib_ip in ib['hca_ip']]
+            sto_hca = sto_ib_info[0].get('name',
+                                         "") if sto_ib_info else ""
+            sto_port = sto_ib_info[0].get('port', "").replace(
+                "Port", "") if sto_ib_info else ""
+
+            sto_read_cmd = "ib_read_lat -a -R {} --ib-dev {} --ib-port {} --iters {} -F".format(
+                ib_ip, sto_hca, sto_port, num)
+
+            sto_write_cmd = "ib_write_lat -a -R {} --ib-dev {} --ib-port {} --iters {} -F".format(
+                ib_ip,
+                sto_hca,
+                sto_port, num)
+
+            t1 = threading.Thread(target=self.com_run_ib_read,
+                                  args=(com['ssh'], com_read_cmd))
+            t1.start()
+            time.sleep(1)
+            read_ret, rtimeout = '', False
+            try:
+                read_ret = self.sto_run_ib_read(sto['ssh'],
+                                            sto_read_cmd)
+            except socket.timeout as e:
+                LOG.error(e.message)
+                rtimeout = True
+            except Exception as e:
+                LOG.error(e.message)
+            Printer.print_cyan(
+                "sto_node: {} ==> com_node: {} ib_read_lat".format(
+                    sto_ib_ip, ib_ip))
+            if read_ret:
+                print "{}ib_read{}\n{}".format("-" * 86, ib_ip, read_ret)
+            else:
+                msg = "timeout with 1min " if rtimeout else "Unable to init the socket connection \n"
+                Printer.print_war(msg)
+                Printer.print_war(
+                    "com_cmd: {}, sto_cmd: {} \n".format(com_write_cmd,
+                                                         sto_write_cmd))
+                com['ssh'].execute(
+                    "ps -ef | grep '{}' | awk '{{print $2}}' | xargs kill -9".format(com_read_cmd))
+
+            t1.join()
+            t2 = threading.Thread(target=self.com_run_ib_write,
+                                  args=(
+                                      com['ssh'], com_write_cmd))
+            t2.start()
+            time.sleep(1)
+            write_ret, timeout = '', False
+            try:
+                write_ret = self.sto_run_ib_write(sto['ssh'], sto_write_cmd)
+            except socket.timeout as e:
+                LOG.error(e.message)
+                timeout = True
+            except Exception as e:
+                LOG.error(e.message)
+
+            Printer.print_cyan(
+                "sto_node: {} ==> com_node: {} ib_write_lat ".format(
+                    sto_ib_ip, ib_ip))
+            if write_ret:
+                print "{}ib_write{}\n{}".format("-" * 86, ib_ip, write_ret)
+            else:
+                msg = "timeout with 1min " if timeout else "Unable to init the socket connection \n"
+                Printer.print_war(msg)
+                Printer.print_war(
+                    "com_cmd: {}, sto_cmd: {} \n".format(com_write_cmd, sto_write_cmd))
+                com['ssh'].execute(
+                    "ps -ef | grep '{}' | awk '{{print $2}}' | xargs kill -9".format(com_write_cmd))
+
+            t2.join()
+
+        com['ssh'].execute(
+            "ps -ef | grep '{}' | awk '{{print $2}}' | xargs kill -9".format(com_read_cmd))
+        com['ssh'].execute(
+            "ps -ef | grep '{}' | awk '{{print $2}}' | xargs kill -9".format(com_write_cmd))
+
+    @timer
+    def check_net_lat(self, com_node, sto_node, ib_link_info, iters):
+        """ 测试ib网络延时 """
+
+        Printer.print_title("Begin: Check the IB lantency for IB card")
+        com_ssh_dict = {}
+        sto_ssh_dict = {}
+        thread_list = []
+        for com in com_node:
+            ssh = SSH(host=com['ip'], username=USERNAME,
+                      password=PASSWORD, key_file=KEY_FILE)
+            for ib_ip in com['ibcard_ip']:
+                if '16.130' in ib_ip or '16.131' in ib_ip:
+                    continue
+                com_ssh_dict[ib_ip] = dict(com_ip=com['ip'], ssh=ssh)
+
+        for sto in sto_node:
+            ssh = SSH(host=sto['ip'], username=USERNAME,
+                      password=PASSWORD, key_file=KEY_FILE)
+            sto_ssh_dict[sto['ip']] = dict(node=sto, ssh=ssh)
+
+        for ib_ip, com in com_ssh_dict.iteritems():
+            time.sleep(2)
+            t = threading.Thread(target=self.run_lat, args=(ib_ip, com, ib_link_info, sto_ssh_dict, iters))
+            thread_list.append(t)
+            t.start()
+
+        for t in thread_list:
+            t.join()
+
+        Printer.print_title("END: Check the IB lantency for IB card")
+
+    def check_net_lat_sync(self, com_node, sto_node, ib_link_info, num):
         """ 测试ib网络延时 """
 
         Printer.print_title("Begin: Check the IB lantency for IB card")
@@ -334,6 +460,11 @@ class CheckLatency(object):
                                              "") if com_ib_info else ""
             com_port = com_ib_info[0].get('port', "").replace("Port",
                                                               "") if com_ib_info else ""
+            com_read_cmd = "ib_read_lat -a -R --ib-dev {} --ib-port {} --iters {} -F".format(
+                com_hca, com_port, num)
+            com_write_cmd = "ib_write_lat -a -R --ib-dev {} --ib-port {} --iters {} -F".format(
+                com_hca, com_port, num)
+
             for sto_ip, sto in sto_ssh_dict.iteritems():
                 sto_ib_ip = ib_ip.split('.')[:-1]
                 sto_ib_ip.append(sto_ip.split('.')[-1])
@@ -344,14 +475,20 @@ class CheckLatency(object):
                                              "") if sto_ib_info else ""
                 sto_port = sto_ib_info[0].get('port', "").replace(
                     "Port", "") if sto_ib_info else ""
+                sto_read_cmd = "ib_read_lat -a -R {} --ib-dev {} --ib-port {} --iters {} -F".format(
+                    ib_ip, sto_hca, sto_port, num)
+
+                sto_write_cmd = "ib_write_lat -a -R {} --ib-dev {} --ib-port {} --iters {} -F".format(
+                    ib_ip,
+                    sto_hca,
+                    sto_port, num)
 
                 t1 = threading.Thread(target=self.com_run_ib_read,
-                                      args=(com['ssh'], com_hca, com_port))
+                                      args=(com['ssh'], com_read_cmd))
                 t1.start()
                 time.sleep(1)
 
-                read_ret = self.sto_run_ib_read(sto['ssh'], ib_ip,
-                                                sto_hca, sto_port)
+                read_ret = self.sto_run_ib_read(sto['ssh'], sto_read_cmd)
                 Printer.print_cyan(
                     "sto_node: {} ==> com_node: {}".format(
                         sto_ib_ip, ib_ip))
@@ -367,13 +504,11 @@ class CheckLatency(object):
                 t1.join()
                 t2 = threading.Thread(target=self.com_run_ib_write,
                                       args=(
-                                          com['ssh'], com_hca,
-                                          com_port))
+                                          com['ssh'], com_write_cmd))
                 t2.start()
                 time.sleep(1)
 
-                write_ret = self.sto_run_ib_write(sto['ssh'], ib_ip,
-                                                  sto_hca, sto_port)
+                write_ret = self.sto_run_ib_write(sto['ssh'], sto_write_cmd)
 
                 Printer.print_blue("ib_write_lat:")
                 if write_ret:
@@ -393,34 +528,36 @@ class CheckLatency(object):
 
         Printer.print_title("END: Check the IB lantency for IB card")
 
-    def com_run_ib_read(self, com_ssh, hca, port):
-        com_cmd = "ib_read_lat -a -R --ib-dev {} --ib-port {}".format(hca, port)
-        output = com_ssh.execute(com_cmd)
-        write_data(output, msg="com node: {}, cmd: {}".format(com_ssh.host, com_cmd))
-        global FLAG
-        FLAG = 1
-
-    def com_run_ib_write(self, com_ssh, hca, port):
-        com_cmd = "ib_write_lat -a -R --ib-dev {} --ib-port {}".format(hca,
-                                                                       port)
-        output = com_ssh.execute(com_cmd)
+    def com_run_ib_read(self, com_ssh, com_cmd):
+        LOG.info("com node: {}, cmd: {}".format(com_ssh.host, com_cmd))
+        try:
+            output = com_ssh.exec_cmd(com_cmd)
+        except Exception as e:
+            LOG.error(e.message)
+            output = e.message
         write_data(output, msg="com node: {}, cmd: {}".format(com_ssh.host, com_cmd))
 
-    def sto_run_ib_read(self, sto_ssh, ib_ip, hca, port):
-        sto_cmd = "ib_read_lat -a -R {} --ib-dev {} --ib-port {} -F".format(
-            ib_ip, hca, port)
-        output = sto_ssh.execute(sto_cmd)
+    def com_run_ib_write(self, com_ssh, com_cmd):
+        LOG.info("com node: {}, cmd: {}".format(com_ssh.host, com_cmd))
+        try:
+            output = com_ssh.exec_cmd(com_cmd)
+        except Exception as e:
+            LOG.error(e.message)
+            output = e.message
+        write_data(output, msg="com node: {}, cmd: {}".format(com_ssh.host, com_cmd))
+
+    def sto_run_ib_read(self, sto_ssh, sto_cmd):
+        LOG.info(sto_cmd)
+        output = sto_ssh.exec_cmd(sto_cmd)
         write_data(output, msg="sto node: {}, cmd: {}".format(sto_ssh.host, sto_cmd))
         match = re.search('.*(#bytes[\s\S]*)', output)
         if match:
             output = match.group(1)
         return output
 
-    def sto_run_ib_write(self, sto_ssh, ib_ip, hca, port):
-        sto_cmd = "ib_write_lat -a -R {} --ib-dev {} --ib-port {} -F".format(ib_ip,
-                                                                          hca,
-                                                                          port)
-        output = sto_ssh.execute(sto_cmd)
+    def sto_run_ib_write(self, sto_ssh, sto_cmd):
+        LOG.info(sto_cmd)
+        output = sto_ssh.exec_cmd(sto_cmd)
         write_data(output, msg="sto node: {}, cmd: {}".format(sto_ssh.host, sto_cmd))
         match = re.search('.*(#bytes[\s\S]*)', output)
         if match:
@@ -432,13 +569,16 @@ class CheckLatency(object):
 def main():
     init_env()
     parser = argparse.ArgumentParser(description='Check iblink')
-    parser.add_argument('-t', '--type', default="all", choices=['all', 'lat', 'check'])
+    parser.add_argument('-t', '--type', default="all", choices=['all', 'lat', 'check'],
+                        help="all: check for all node, lat: only check ib latency, check: check other infomation")
     parser.add_argument('-c', '--compute', default=None, help=" Compute node ip")
     parser.add_argument('-s', '--storage', default=None, help="Storage node ip")
+    parser.add_argument('-n', '--iters', default=100, help="Number of exchanges (at least 5, default 1000)")
     args = parser.parse_args()
     com_ip = args.compute
     sto_ip = args.storage
     rtype = args.type
+    iters = args.iters
 
     node_ip = socket.gethostbyname(socket.gethostname())
     ssh = SSH(host=node_ip, username=USERNAME, password=PASSWORD,
@@ -472,7 +612,7 @@ def main():
 
     if rtype in ['all', 'lat']:
         latency = CheckLatency()
-        latency.check_net_lat(com_node, sto_node, ib_link_info)
+        latency.check_net_lat(com_node, sto_node, ib_link_info, iters)
 
 
 if __name__ == "__main__":
