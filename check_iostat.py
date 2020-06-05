@@ -228,7 +228,7 @@ class StoIOStat(BaseIOStat):
 def main():
     parser = argparse.ArgumentParser(description='Check iostat')
     parser.add_argument('-i', '--ip', default=socket.gethostbyname(socket.gethostname()))
-    parser.add_argument('-t', '--type', default=None)
+    parser.add_argument('-t', '--type', default=None, choices=['compute', 'storage'])
     parser.add_argument('-c', '--count', default=3, type=int)
     parser.add_argument('-a', '--await', default=0.0, type=float)
     args = parser.parse_args()

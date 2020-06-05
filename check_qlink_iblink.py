@@ -27,10 +27,8 @@ from termcolor import colored
 
 
 USERNAME = "root"
-# PASSWORD = None
-# KEY_FILE = "/root/.ssh/id_rsa"
-KEY_FILE = None
-PASSWORD = "cljslrl0620"
+PASSWORD = None
+KEY_FILE = "/root/.ssh/id_rsa"
 FILE_PATH = "/tmp/check_iblink_ret.txt"
 
 logging.basicConfig(level=logging.INFO,
@@ -382,6 +380,9 @@ class CheckLatency(object):
                                                          sto_write_cmd))
                 com['ssh'].execute(
                     "ps -ef | grep '{}' | awk '{{print $2}}' | xargs kill -9".format(com_read_cmd))
+                write_data(msg,
+                           msg="sto node: {}, cmd: {}".format(sto['ssh'].host,
+                                                              sto_read_cmd))
 
             t1.join()
             t2 = threading.Thread(target=self.com_run_ib_write,
@@ -410,6 +411,9 @@ class CheckLatency(object):
                     "com_cmd: {}, sto_cmd: {} \n".format(com_write_cmd, sto_write_cmd))
                 com['ssh'].execute(
                     "ps -ef | grep '{}' | awk '{{print $2}}' | xargs kill -9".format(com_write_cmd))
+                write_data(msg,
+                           msg="sto node: {}, cmd: {}".format(sto['ssh'].host,
+                                                              sto_write_cmd))
 
             t2.join()
 
@@ -598,7 +602,6 @@ def main():
     iters = args.iters
 
     node_ip = socket.gethostbyname(socket.gethostname())
-    node_ip = "10.10.90.11"
     ssh = SSH(host=node_ip, username=USERNAME, password=PASSWORD,
               key_file=KEY_FILE)
     collect = Collect()
