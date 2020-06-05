@@ -371,7 +371,7 @@ class CheckLatency(object):
                 "sto_node: {} ==> com_node: {} ib_read_lat".format(
                     sto_ib_ip, ib_ip))
             if read_ret:
-                print "{}ib_read{}\n{}".format("-" * 86, ib_ip, read_ret)
+                print "{}\n{}".format("-" * 86, read_ret)
             else:
                 msg = "timeout with 1min " if rtimeout else "Unable to init the socket connection \n"
                 Printer.print_war(msg)
@@ -403,7 +403,7 @@ class CheckLatency(object):
                 "sto_node: {} ==> com_node: {} ib_write_lat ".format(
                     sto_ib_ip, ib_ip))
             if write_ret:
-                print "{}ib_write{}\n{}".format("-" * 86, ib_ip, write_ret)
+                print "{}\n{}".format("-" * 86, write_ret)
             else:
                 msg = "timeout with 1min " if timeout else "Unable to init the socket connection \n"
                 Printer.print_war(msg)
